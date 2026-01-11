@@ -1,7 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3 
+import argparse
 import curses
 import time
-from typing import Iterable, List, Set, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 
 Cell = Tuple[int, int]
 
@@ -84,7 +85,105 @@ def draw(stdscr: "curses._CursesWindow", live: Set[Cell], rows: int, cols: int) 
     stdscr.refresh()
 
 
-def run(stdscr: "curses._CursesWindow") -> None:
+def draw_editor(
+    stdscr: "curses._CursesWindow",
+    live: Set[Cell],
+    rows: int,
+    cols: int,
+    cursor: Cell,
+) -> None:
+    blank = " " * cols
+    rows_to_cols = {}
+    for r, c in live:
+        rows_to_cols.setdefault(r, []).append(c)
+
+    for r in range(rows):
+        if r in rows_to_cols:
+            row = [" "] * cols
+            for c in rows_to_cols[r]:
+                if 0 <= c < cols:
+                    row[c] = "O"
+            line = "".join(row)
+        else:
+            line = blank
+        try:
+            stdscr.addstr(r, 0, line)
+        except curses.error:
+            pass
+
+    cur_r, cur_c = cursor
+    if 0 <= cur_r < rows and 0 <= cur_c < cols:
+        ch = "O" if (cur_r, cur_c) in live else " "
+        try:
+            stdscr.addstr(cur_r, cur_c, ch, curses.A_REVERSE)
+        except curses.error:
+            pass
+
+    stdscr.refresh()
+
+
+def edit_pattern(stdscr: "curses._CursesWindow") -> Set[Cell]:
+    curses.curs_set(0)
+    stdscr.nodelay(False)
+    stdscr.keypad(True)
+    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+    curses.mouseinterval(0)
+
+    rows, cols = stdscr.getmaxyx()
+    live: Set[Cell] = set()
+    cursor = (rows // 2, cols // 2)
+
+    while True:
+        rows_now, cols_now = stdscr.getmaxyx()
+        if (rows_now, cols_now) != (rows, cols):
+            rows, cols = rows_now, cols_now
+            live = {cell for cell in live if 0 <= cell[0] < rows and 0 <= cell[1] < cols}
+            cursor = (min(cursor[0], rows - 1), min(cursor[1], cols - 1))
+
+        draw_editor(stdscr, live, rows, cols, cursor)
+        key = stdscr.getch()
+
+        if key in (ord("q"), ord("Q")):
+            return set()
+        if key in (curses.KEY_ENTER, 10, 13):
+            return live
+        if key == ord(" "):
+            if cursor in live:
+                live.remove(cursor)
+            else:
+                live.add(cursor)
+            continue
+        if key == curses.KEY_MOUSE:
+            try:
+                _, mx, my, _, bstate = curses.getmouse()
+            except curses.error:
+                continue
+            if 0 <= my < rows and 0 <= mx < cols:
+                cursor = (my, mx)
+                if bstate & (
+                    curses.BUTTON1_PRESSED
+                    | curses.BUTTON1_CLICKED
+                    | curses.BUTTON1_DOUBLE_CLICKED
+                ):
+                    if cursor in live:
+                        live.remove(cursor)
+                    else:
+                        live.add(cursor)
+            continue
+
+        r, c = cursor
+        if key in (curses.KEY_UP, ord("k")):
+            r = max(0, r - 1)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            r = min(rows - 1, r + 1)
+        elif key in (curses.KEY_LEFT, ord("h")):
+            c = max(0, c - 1)
+        elif key in (curses.KEY_RIGHT, ord("l")):
+            c = min(cols - 1, c + 1)
+        cursor = (r, c)
+
+
+def run(stdscr: "curses._CursesWindow", initial_cells: Optional[Set[Cell]]) -> None:
     curses.curs_set(0)
     stdscr.nodelay(True)
     stdscr.keypad(True)
@@ -146,18 +245,85 @@ def run(stdscr: "curses._CursesWindow") -> None:
                 ]
             ),
         },
+        {
+            "name": "R-pentomino",
+            "cells": parse_pattern(
+                [
+                    ".OO",
+                    "OO.",
+                    ".O.",
+                ]
+            ),
+        },
+        {
+            "name": "Diehard",
+            "cells": parse_pattern(
+                [
+                    "......O.",
+                    "OO......",
+                    ".O...OOO",
+                ]
+            ),
+        },
+        {
+            "name": "Ten-cell Row",
+            "cells": parse_pattern(
+                [
+                    "OOOOOOOOOO",
+                ]
+            ),
+        },
+        {
+            "name": "Beacon",
+            "cells": parse_pattern(
+                [
+                    "OO..",
+                    "OO..",
+                    "..OO",
+                    "..OO",
+                ]
+            ),
+        },
+        {
+            "name": "Toad",
+            "cells": parse_pattern(
+                [
+                    ".OOO",
+                    "OOO.",
+                ]
+            ),
+        },
+        {
+            "name": "2-4-3-4-2",
+            "cells": parse_pattern(
+                [
+                    "..OO..",
+                    ".OOOO.",
+                    "OO...O",
+                    ".OOOO.",
+                    "..OO..",
+                ]
+            ),
+        },
     ]
 
     pattern_index = 0
     rows, cols = stdscr.getmaxyx()
-    live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
+    if initial_cells is not None:
+        patterns.insert(0, {"name": "Custom", "cells": []})
+        live = set(initial_cells)
+    else:
+        live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
     seen_states = set()
 
     while True:
         rows_now, cols_now = stdscr.getmaxyx()
         if (rows_now, cols_now) != (rows, cols):
             rows, cols = rows_now, cols_now
-            live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
+            if pattern_index == 0 and initial_cells is not None:
+                live = {cell for cell in live if 0 <= cell[0] < rows and 0 <= cell[1] < cols}
+            else:
+                live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
             seen_states.clear()
 
         draw(stdscr, live, rows, cols)
@@ -167,13 +333,19 @@ def run(stdscr: "curses._CursesWindow") -> None:
             break
         if key in (ord("n"), ord("N")):
             pattern_index = (pattern_index + 1) % len(patterns)
-            live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
+            if pattern_index == 0 and initial_cells is not None:
+                live = set(initial_cells)
+            else:
+                live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
             seen_states.clear()
 
         state_hash = hash(frozenset(live))
         if state_hash in seen_states or not live:
             pattern_index = (pattern_index + 1) % len(patterns)
-            live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
+            if pattern_index == 0 and initial_cells is not None:
+                live = set(initial_cells)
+            else:
+                live = seed_pattern(patterns[pattern_index]["cells"], rows, cols)
             seen_states.clear()
             continue
 
@@ -183,7 +355,27 @@ def run(stdscr: "curses._CursesWindow") -> None:
 
 
 def main() -> None:
-    curses.wrapper(run)
+    parser = argparse.ArgumentParser(description="Terminal Game of Life")
+    parser.add_argument(
+        "--draw",
+        action="store_true",
+        help="Draw a custom starting pattern using the mouse or vim keys",
+    )
+    args = parser.parse_args()
+
+    initial_cells: Optional[Set[Cell]] = None
+    if args.draw:
+        def _editor(stdscr: "curses._CursesWindow") -> Set[Cell]:
+            return edit_pattern(stdscr)
+
+        initial_cells = curses.wrapper(_editor)
+        if not initial_cells:
+            return
+
+    def _runner(stdscr: "curses._CursesWindow") -> None:
+        run(stdscr, initial_cells)
+
+    curses.wrapper(_runner)
 
 
 if __name__ == "__main__":
