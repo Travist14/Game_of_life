@@ -12,6 +12,6 @@ Controls:
 
 The simulation fills the terminal window. When a pattern reaches a repeating or empty state, it automatically cycles to the next starting pattern.
 
-you by passing `-draw` you can create the starting pattern by selecting positions with the house or navigating around using vim keys.
+you by passing `--draw` you can create the starting pattern by selecting positions with the house or navigating around using vim keys.
 
 I just wanted something that looked cool to fill my other monitor and thought the game of life would be nice.
